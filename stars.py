@@ -74,8 +74,7 @@ group_activity_col = db["group_activity"]
 rains_col = db["rains"]
 pending_rains_col = db["pending_rains"]
 
-# 🚀 FIX: Thread pool badha diya taaki fast kaam kare
-bot = telebot.TeleBot(CONFIG["BOT_TOKEN"], parse_mode="HTML", threaded=True, num_threads=100)
+bot = telebot.TeleBot(CONFIG["BOT_TOKEN"], parse_mode="HTML", threaded=True)
 
 # 🛠 DEFAULT GIFTS SEEDING & PRICE UPDATING
 default_gifts = [
@@ -102,14 +101,13 @@ else:
             upsert=False
         )
 
-# ⚡ FAST CACHING SYSTEM (Lag dur karne ke liye)
+# ⚡ FAST CACHING SYSTEM
 GIFTS_CACHE = []
 
 def refresh_gifts_cache():
     global GIFTS_CACHE
     GIFTS_CACHE = list(gifts_catalog_col.find())
 
-# Ek baar start par cache load kar lo
 refresh_gifts_cache()
 
 # ==========================================
@@ -138,9 +136,12 @@ def get_house_bal():
 def send_real_telegram_gift(chat_id, gift_name, amount, comment=None):
     url = f"https://api.telegram.org/bot{CONFIG['BOT_TOKEN']}/sendGift"
     
-    # Fast RAM lookup from Cache
     g = next((item for item in GIFTS_CACHE if item["name"].lower() == gift_name.lower()), None)
     gift_id = g["id"] if g else CONFIG["REAL_GIFT_IDS"].get(gift_name, "INVALID_ID")
+    
+    # 🔴 FIX: Agar gift Teddy ya Heart hai aur amount 7 bheji gayi hai, lekin real delivery failure par 
+    # exact standard price (14) ya catalog price refund karni ho toh ensure karein ki sahi amount refund ho.
+    # Yahan jo 'amount' parameter pass hoga, wahi refund hoga. Slot me humne 14 pass kiya hai Teddy ke liye.
     
     payload = {"user_id": chat_id, "gift_id": gift_id}
     if comment:
@@ -221,7 +222,7 @@ LANG = {
 }
 
 # ==========================================
-# 🎛 KEYBOARDS (STYLED WITH COLORS & AUTO-URL)
+# 🎛 KEYBOARDS (STYLED WITH COLORS)
 # ==========================================
 def btn(text: str, data: str = None, style: str = None, url: str = None, icon: str = None):
     b = InlineKeyboardButton(text=str(text))
@@ -304,7 +305,6 @@ def gifts_kb(lang_code, user):
     t = LANG[lang_code]
     m = InlineKeyboardMarkup()
     
-    # 🚀 FIX: Using Global Cache for instant load
     for i, g in enumerate(GIFTS_CACHE):
         price = g["price"]
         if g["name"].lower() == "teddy bear" and user.get("bought_teddy"): price = 14
@@ -339,7 +339,7 @@ def admin_addgift(message):
         gift_id = parts[2]
         amount = int(parts[3])
         gifts_catalog_col.update_one({"name": gift_name}, {"$set": {"id": gift_id, "price": amount}}, upsert=True)
-        refresh_gifts_cache() # Update cache instantly
+        refresh_gifts_cache()
         bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> <b>Gift Added!</b>\nName: {gift_name}\nID: <code>{gift_id}</code>\nPrice: {amount} ⭐️")
     except Exception:
         bot.reply_to(message, "❌ Format: `/addgift Gift_Name Gift_ID Amount`", parse_mode="Markdown")
@@ -598,7 +598,6 @@ def start_cmd(message):
 # ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    # 🚀 FIX: Instant Feedback. Loading icon turant hat jayega.
     try: bot.answer_callback_query(call.id)
     except Exception: pass
     
@@ -751,24 +750,19 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
     is_win = False
     reward_name = ""
     
-    # 🚀 EXACT SLOTS LOGIC (BASE-4 DECODING)
-    # 🎰 Dice returns a value from 1 to 64
     v0 = dice_value - 1
     reel1 = v0 % 4
     reel2 = (v0 // 4) % 4
     reel3 = (v0 // 16) % 4
     
-    # 🔴 TEENO SAME = Any Combo (Jackpot)
     is_any_combo = (reel1 == reel2 == reel3)
-    
-    # 🔴 TEENO ALAG-ALAG = Unique Combo
     is_unique_combo = (reel1 != reel2 and reel1 != reel3 and reel2 != reel3)
     
     if target == "any": 
         if is_any_combo:
             is_win = True
     elif target == "unique": 
-        if is_unique_combo: # 🚀 FIX: Ab yahan exact reels par condition check hoti hai
+        if is_unique_combo:
             is_win = True
             
     if is_win:
@@ -783,7 +777,11 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
             
         bot.send_message(chat_id, f"<tg-emoji emoji-id='{CONFIG['TEXT_EMOJI']['WIN']}'>🎉</tg-emoji> <b>WINNER!</b>\n\nYou won a {reward_name}!")
         g = next((item for item in GIFTS_CACHE if item["name"].lower() == reward_name.lower()), None)
-        price = g["price"] if g else 0
+        
+        # 🔴 FIX: Agar gift Teddy bear ya Heart hai aur user jeeta hai, toh delivery fail hone par 
+        # refund amount 14 stars honi chahiye kyunki standard gift value 14 stars hai.
+        price = 14 if reward_name.lower() in ["teddy bear", "heart"] else (g["price"] if g else bet)
+        
         send_real_telegram_gift(chat_id, reward_name, price, "You won the slot machine!")
     else:
         bot.send_message(chat_id, f"<tg-emoji emoji-id='{CONFIG['TEXT_EMOJI']['LOSE']}'>😢</tg-emoji> <b>You lost!</b>\n\nBetter luck next time. Lost {bet} ⭐️.")
