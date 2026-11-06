@@ -854,9 +854,9 @@ def track_activity(message):
 # 📌 SET BOT MENU COMMANDS
 # ==========================================
 bot.set_my_commands([
-    BotCommand("start", "Bot start karein aur menu kholen"),
-    BotCommand("housebal", "Bot ka reserve balance dekhein"),
-    BotCommand("rainlb", "Group ke top rainers dekhein")
+    BotCommand("start", "Start bot / Запустить бота"),
+    BotCommand("housebal", "Reserve balance / Резервный баланс"),
+    BotCommand("rainlb", "Top rainers / Топ участников дождя")
 ])
 
 print("🚀 Fully Loaded Premium Styled Bot is running...")
