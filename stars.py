@@ -204,7 +204,7 @@ LANG = {
 }
 
 # ==========================================
-# 🎛 KEYBOARDS (STYLED WITH COLORS & AUTO-URL)
+# 🎛 KEYBOARDS (STYLED WITH COLORS)
 # ==========================================
 def btn(text: str, data: str = None, style: str = None, url: str = None, icon: str = None):
     b = InlineKeyboardButton(text=str(text))
@@ -272,9 +272,6 @@ def luck_kb(l):
 
 def slot_options_kb(bet, l):
     rows = []
-    
-    # 🔴 SABHI BETS (6, 10, 20) MEIN ANY COMBO & UNIQUE COMBO OPTIONS HONGE
-    
     if bet == 6:
         rows.append([("Any Combo (Win Rose)", "slotbet_6_any", "primary"), ("Unique Combo (Win Teddy)", "slotbet_6_unique", "success")])
     elif bet == 10:
@@ -582,6 +579,10 @@ def start_cmd(message):
 # ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
+    # FAST RESPONSE: Har click ke sath turant spinner loading hata dega
+    try: bot.answer_callback_query(call.id)
+    except Exception: pass
+    
     user_id = call.from_user.id
     user = get_user(user_id)
     lang = user["lang"]
@@ -604,17 +605,13 @@ def callback_handler(call):
             if user["balance"] < bet:
                 return bot.answer_callback_query(call.id, "Insufficient balance!", show_alert=True)
                 
-            bot.answer_callback_query(call.id)
             update_balance(user_id, -bet)
             if chat_id:
-                try:
-                    bot.edit_message_text(f"🎰 Rolling the slot machine for {bet} ⭐️...", chat_id=chat_id, message_id=call.message.message_id)
+                try: bot.edit_message_text(f"🎰 Rolling the slot machine for {bet} ⭐️...", chat_id=chat_id, message_id=call.message.message_id)
                 except Exception: pass
                 dice_msg = bot.send_dice(chat_id, emoji="🎰")
                 threading.Thread(target=process_slot_result, args=(chat_id, call.message.message_id, user_id, bet, target, dice_msg.dice.value)).start()
             return
-            
-        bot.answer_callback_query(call.id)
 
         if not chat_id: return 
 
@@ -735,20 +732,25 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
     is_win = False
     reward_name = ""
     
-    # EXACT SLOTS LOGIC
-    # Jackpot Combinations (All 3 same) are: 1, 22, 43, 64
-    JACKPOT_COMBOS = [1, 22, 43, 64]
+    # EXACT SLOTS LOGIC (BASE-4 DECODING)
+    # 🎰 Dice returns a value from 1 to 64
+    v0 = dice_value - 1
+    reel1 = v0 % 4
+    reel2 = (v0 // 4) % 4
+    reel3 = (v0 // 16) % 4
     
+    # 🔴 TEENO SAME = Any Combo (Jackpot)
+    is_any_combo = (reel1 == reel2 == reel3)
+    
+    # 🔴 TEENO ALAG-ALAG = Unique Combo
+    is_unique_combo = (reel1 != reel2 and reel1 != reel3 and reel2 != reel3)
+    
+    # Check Winning Conditions Based on Button Click
     if target == "any": 
-        # "Any Combo" - Wins if ANY jackpot combination hits (all 3 matching symbols)
-        if dice_value in JACKPOT_COMBOS:
+        if is_any_combo:
             is_win = True
     elif target == "unique": 
-        # "Unique Combo" - Wins if all 3 symbols are COMPLETELY DIFFERENT.
-        # In Telegram slots, completely unique outcomes are those NOT in JACKPOT_COMBOS.
-        # We set a reasonable random threshold for a "3 distinct symbols" win rate (~20-25% chance)
-        # to simulate the true mathematical probability of getting 3 completely different items.
-        if dice_value not in JACKPOT_COMBOS and random.randint(1, 100) <= 22:
+        if is_unique_combo:
             is_win = True
             
     if is_win:
@@ -877,7 +879,7 @@ bot.set_my_commands([
     BotCommand("rainlb", "View top rainers in group")
 ])
 
-# 2. Russian Commands (Sirf Russian users ko dikhega)
+# 2. Russian Commands
 bot.set_my_commands([
     BotCommand("start", "Запустить бота и открыть меню"),
     BotCommand("housebal", "Проверить резервный баланс"),
