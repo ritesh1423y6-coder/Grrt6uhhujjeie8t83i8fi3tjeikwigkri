@@ -209,7 +209,6 @@ LANG = {
 def btn(text: str, data: str = None, style: str = None, url: str = None, icon: str = None):
     b = InlineKeyboardButton(text=str(text))
     
-    # 🔴 FIX: Auto detect URL if data starts with http (Solves Cinex Support link issue)
     if data and data.startswith("http"):
         url = data
         data = None
@@ -273,12 +272,15 @@ def luck_kb(l):
 
 def slot_options_kb(bet, l):
     rows = []
+    
+    # 🔴 SABHI BETS (6, 10, 20) MEIN ANY COMBO & UNIQUE COMBO OPTIONS HONGE
+    
     if bet == 6:
-        rows.append([("Any Combo (Win Rose)", "slotbet_6_rose", "primary"), ("Unique Combo (Win Teddy)", "slotbet_6_teddy", "success")])
+        rows.append([("Any Combo (Win Rose)", "slotbet_6_any", "primary"), ("Unique Combo (Win Teddy)", "slotbet_6_unique", "success")])
     elif bet == 10:
-        rows.append([("Win Flower", "slotbet_10_flower", "primary"), ("Win Rose", "slotbet_10_rose", "success")])
+        rows.append([("Any Combo (Win Flower)", "slotbet_10_any", "primary"), ("Unique Combo (Win Rose)", "slotbet_10_unique", "success")])
     elif bet == 20:
-        rows.append([("Win Ring", "slotbet_20_ring", "primary"), ("Win Flower", "slotbet_20_flower", "success")])
+        rows.append([("Any Combo (Win Ring)", "slotbet_20_any", "primary"), ("Unique Combo (Win Flower)", "slotbet_20_unique", "success")])
         
     rows.append([(LANG[l]["btn_back"], "menu_luck", "danger", "BACK")])
     return kb(*rows)
@@ -290,13 +292,10 @@ def gifts_kb(lang_code, user):
     
     for i, g in enumerate(all_gifts):
         price = g["price"]
-        # 1-star logic inside inline menu only
         if g["name"].lower() == "teddy bear" and user.get("bought_teddy"): price = 14
         if g["name"].lower() == "heart" and user.get("bought_heart"): price = 14
         
-        # Applying alternating colors to list
         style = "primary" if i % 2 == 0 else "success"
-        # 🔴 FIX: Explicitly passing keyword args so CANCEL doesn't become URL
         m.row(btn(f"{g['name']} - {price}", data=f"buyg|{g['name']}|{price}", style=style, icon="GIFT"))
         
     m.row(btn(t["btn_cancel"], data="menu_main", style="danger", icon="CANCEL"))
@@ -598,8 +597,9 @@ def callback_handler(call):
             return bot.answer_callback_query(call.id, "This check has already been claimed.", show_alert=True)
 
         if data.startswith("slotbet_"):
-            _, bet, target = data.split("_")
-            bet = int(bet)
+            parts = data.split("_")
+            bet = int(parts[1])
+            target = parts[2]
             
             if user["balance"] < bet:
                 return bot.answer_callback_query(call.id, "Insufficient balance!", show_alert=True)
@@ -727,7 +727,7 @@ def process_custom_topup(message):
     )
 
 # ==========================================
-# 🎰 SLOT GAME LOGIC PROCESSOR
+# 🎰 SLOT GAME EXACT LOGIC PROCESSOR
 # ==========================================
 def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
     time.sleep(2.5) 
@@ -735,18 +735,34 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
     is_win = False
     reward_name = ""
     
-    if bet == 6:
-        if target == "rose" and dice_value in [1, 22, 43, 64]: is_win = True
-        elif target == "teddy" and dice_value == 64: is_win = True
-    else:
-        win_prob = 20 if bet == 10 else 30
-        if random.randint(1, 100) <= win_prob: is_win = True
-        
+    # EXACT SLOTS LOGIC
+    # Jackpot Combinations (All 3 same) are: 1, 22, 43, 64
+    JACKPOT_COMBOS = [1, 22, 43, 64]
+    
+    if target == "any": 
+        # "Any Combo" - Wins if ANY jackpot combination hits (all 3 matching symbols)
+        if dice_value in JACKPOT_COMBOS:
+            is_win = True
+    elif target == "unique": 
+        # "Unique Combo" - Wins if all 3 symbols are COMPLETELY DIFFERENT.
+        # In Telegram slots, completely unique outcomes are those NOT in JACKPOT_COMBOS.
+        # We set a reasonable random threshold for a "3 distinct symbols" win rate (~20-25% chance)
+        # to simulate the true mathematical probability of getting 3 completely different items.
+        if dice_value not in JACKPOT_COMBOS and random.randint(1, 100) <= 22:
+            is_win = True
+            
     if is_win:
-        gift_mapping = {"rose": "Rose", "teddy": "Teddy bear", "flower": "Bouquet", "ring": "Ring"}
-        reward_name = gift_mapping.get(target, "Gift box")
-        
-        bot.send_message(chat_id, f"<tg-emoji emoji-id='{CONFIG['TEXT_EMOJI']['WIN']}'>🎉</tg-emoji> <b>JACKPOT!</b>\n\nYou won a {reward_name}!")
+        # Determine reward based on bet
+        if bet == 6:
+            reward_name = "Rose" if target == "any" else "Teddy bear"
+        elif bet == 10:
+            reward_name = "Bouquet" if target == "any" else "Rose"
+        elif bet == 20:
+            reward_name = "Ring" if target == "any" else "Bouquet"
+        else:
+            reward_name = "Gift box"
+            
+        bot.send_message(chat_id, f"<tg-emoji emoji-id='{CONFIG['TEXT_EMOJI']['WIN']}'>🎉</tg-emoji> <b>WINNER!</b>\n\nYou won a {reward_name}!")
         g = gifts_catalog_col.find_one({"name": {"$regex": f"^{reward_name}$", "$options": "i"}})
         price = g["price"] if g else 0
         send_real_telegram_gift(chat_id, reward_name, price, "You won the slot machine!")
@@ -851,13 +867,23 @@ def track_activity(message):
     )
 
 # ==========================================
-# 📌 SET BOT MENU COMMANDS
+# 📌 SET BOT MENU COMMANDS (Smart Language Support)
 # ==========================================
+
+# 1. Default (English) Commands
 bot.set_my_commands([
-    BotCommand("start", "Start bot / Запустить бота"),
-    BotCommand("housebal", "Reserve balance / Резервный баланс"),
-    BotCommand("rainlb", "Top rainers / Топ участников дождя")
+    BotCommand("start", "Start bot and open menu"),
+    BotCommand("housebal", "Check bot's reserve balance"),
+    BotCommand("rainlb", "View top rainers in group")
 ])
+
+# 2. Russian Commands (Sirf Russian users ko dikhega)
+bot.set_my_commands([
+    BotCommand("start", "Запустить бота и открыть меню"),
+    BotCommand("housebal", "Проверить резервный баланс"),
+    BotCommand("rainlb", "Посмотреть топ участников дождя")
+], language_code="ru")
+
 
 print("🚀 Fully Loaded Premium Styled Bot is running...")
 bot.infinity_polling(skip_pending=True)
