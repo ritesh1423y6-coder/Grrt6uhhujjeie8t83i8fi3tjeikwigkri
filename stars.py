@@ -204,7 +204,7 @@ LANG = {
 }
 
 # ==========================================
-# 🎛 KEYBOARDS (STYLED WITH COLORS)
+# 🎛 KEYBOARDS (STYLED WITH COLORS & AUTO-URL)
 # ==========================================
 def btn(text: str, data: str = None, style: str = None, url: str = None, icon: str = None):
     b = InlineKeyboardButton(text=str(text))
@@ -272,6 +272,7 @@ def luck_kb(l):
 
 def slot_options_kb(bet, l):
     rows = []
+    
     if bet == 6:
         rows.append([("Any Combo (Win Rose)", "slotbet_6_any", "primary"), ("Unique Combo (Win Teddy)", "slotbet_6_unique", "success")])
     elif bet == 10:
@@ -575,11 +576,11 @@ def start_cmd(message):
     bot.send_message(message.chat.id, text, reply_markup=main_menu_kb(user["lang"]))
 
 # ==========================================
-# 🔄 FAST CALLBACK HANDLER
+# 🔄 FAST CALLBACK HANDLER (LAG FREE)
 # ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    # FAST RESPONSE: Har click ke sath turant spinner loading hata dega
+    # 🔴 INSTANT BUTTON RESPONSE: Click karte hi loading icon hat jayega
     try: bot.answer_callback_query(call.id)
     except Exception: pass
     
@@ -743,6 +744,7 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
     is_any_combo = (reel1 == reel2 == reel3)
     
     # 🔴 TEENO ALAG-ALAG = Unique Combo
+    # Unique ka matlab: reel1, reel2 se alag hai, aur reel1, reel3 se alag hai, aur reel2, reel3 se alag hai.
     is_unique_combo = (reel1 != reel2 and reel1 != reel3 and reel2 != reel3)
     
     # Check Winning Conditions Based on Button Click
