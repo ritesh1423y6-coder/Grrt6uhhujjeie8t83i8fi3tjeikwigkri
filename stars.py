@@ -74,7 +74,8 @@ group_activity_col = db["group_activity"]
 rains_col = db["rains"]
 pending_rains_col = db["pending_rains"]
 
-bot = telebot.TeleBot(CONFIG["BOT_TOKEN"], parse_mode="HTML", threaded=True)
+# 🚀 FIX: Thread pool badha diya taaki fast kaam kare
+bot = telebot.TeleBot(CONFIG["BOT_TOKEN"], parse_mode="HTML", threaded=True, num_threads=100)
 
 # 🛠 DEFAULT GIFTS SEEDING & PRICE UPDATING
 default_gifts = [
@@ -94,13 +95,22 @@ default_gifts = [
 if gifts_catalog_col.count_documents({}) == 0:
     gifts_catalog_col.insert_many(default_gifts)
 else:
-    # 🔴 FIX: Ye loop purane db prices ko automatically naye prices pe update kar dega!
     for g in default_gifts:
         gifts_catalog_col.update_one(
             {"name": {"$regex": f"^{g['name']}$", "$options": "i"}}, 
             {"$set": {"id": g["id"], "price": g["price"]}}, 
             upsert=False
         )
+
+# ⚡ FAST CACHING SYSTEM (Lag dur karne ke liye)
+GIFTS_CACHE = []
+
+def refresh_gifts_cache():
+    global GIFTS_CACHE
+    GIFTS_CACHE = list(gifts_catalog_col.find())
+
+# Ek baar start par cache load kar lo
+refresh_gifts_cache()
 
 # ==========================================
 # 🛡 DATABASE HELPERS
@@ -128,7 +138,8 @@ def get_house_bal():
 def send_real_telegram_gift(chat_id, gift_name, amount, comment=None):
     url = f"https://api.telegram.org/bot{CONFIG['BOT_TOKEN']}/sendGift"
     
-    g = gifts_catalog_col.find_one({"name": {"$regex": f"^{gift_name}$", "$options": "i"}})
+    # Fast RAM lookup from Cache
+    g = next((item for item in GIFTS_CACHE if item["name"].lower() == gift_name.lower()), None)
     gift_id = g["id"] if g else CONFIG["REAL_GIFT_IDS"].get(gift_name, "INVALID_ID")
     
     payload = {"user_id": chat_id, "gift_id": gift_id}
@@ -270,7 +281,6 @@ def topup_kb(l):
 
 def luck_kb(l):
     t = LANG[l]
-    # 🔴 FIX: 6->10, 10->15, 20->30
     return kb(
         [("10 ⭐️", "slot_10", "primary", "STAR"), ("15 ⭐️", "slot_15", None, "STAR")],
         [("30 ⭐️", "slot_30", "success", "STAR")],
@@ -293,9 +303,9 @@ def slot_options_kb(bet, l):
 def gifts_kb(lang_code, user):
     t = LANG[lang_code]
     m = InlineKeyboardMarkup()
-    all_gifts = list(gifts_catalog_col.find())
     
-    for i, g in enumerate(all_gifts):
+    # 🚀 FIX: Using Global Cache for instant load
+    for i, g in enumerate(GIFTS_CACHE):
         price = g["price"]
         if g["name"].lower() == "teddy bear" and user.get("bought_teddy"): price = 14
         if g["name"].lower() == "heart" and user.get("bought_heart"): price = 14
@@ -329,6 +339,7 @@ def admin_addgift(message):
         gift_id = parts[2]
         amount = int(parts[3])
         gifts_catalog_col.update_one({"name": gift_name}, {"$set": {"id": gift_id, "price": amount}}, upsert=True)
+        refresh_gifts_cache() # Update cache instantly
         bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> <b>Gift Added!</b>\nName: {gift_name}\nID: <code>{gift_id}</code>\nPrice: {amount} ⭐️")
     except Exception:
         bot.reply_to(message, "❌ Format: `/addgift Gift_Name Gift_ID Amount`", parse_mode="Markdown")
@@ -346,7 +357,7 @@ def admin_giftsend(message):
         if not u: return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> User not found in database.")
 
         bot.reply_to(message, "Sending gift...")
-        g = gifts_catalog_col.find_one({"name": {"$regex": f"^{gift_name}$", "$options": "i"}})
+        g = next((item for item in GIFTS_CACHE if item["name"].lower() == gift_name.lower()), None)
         price = g["price"] if g else 0
         actual_name = g["name"] if g else gift_name
         threading.Thread(target=send_real_telegram_gift, args=(u["_id"], actual_name, price, comment)).start()
@@ -400,13 +411,12 @@ def rain_command(message):
     except Exception:
         return bot.reply_to(message, "❌ <b>Format:</b> <code>/rain Gift_Name Amount_of_Winners Comment</code>\n<b>Example:</b> <code>/rain Heart 1 Happy</code>", parse_mode="HTML")
         
-    g = gifts_catalog_col.find_one({"name": {"$regex": f"^{gift_name}$", "$options": "i"}})
+    g = next((item for item in GIFTS_CACHE if item["name"].lower() == gift_name.lower()), None)
     if not g: return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Gift not found!")
     
     actual_gift_name = g["name"]
     gift_unit_price = g["price"]
     
-    # 🔴 FIX: Teddy aur Heart ab 7 stars ke hain. Rain me inka base price hi lagta hai (no discount).
     if actual_gift_name.lower() in ["teddy bear", "heart"] and gift_unit_price == 7:
         gift_unit_price = 14
         
@@ -588,6 +598,7 @@ def start_cmd(message):
 # ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
+    # 🚀 FIX: Instant Feedback. Loading icon turant hat jayega.
     try: bot.answer_callback_query(call.id)
     except Exception: pass
     
@@ -682,7 +693,6 @@ def callback_handler(call):
                 try: bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=gifts_kb(lang, updated_user))
                 except Exception: pass
                 
-                # 🔴 FIX: 7 Stars wale gifts ko free comment prompt jayega 
                 if amount == 7:
                     auto_comment = "A small gift by @redcube. Join today and earn and win money. Contact @Cinex"
                     threading.Thread(target=send_real_telegram_gift, args=(chat_id, gift_name, amount, auto_comment)).start()
@@ -741,7 +751,7 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
     is_win = False
     reward_name = ""
     
-    # EXACT SLOTS LOGIC (BASE-4 DECODING)
+    # 🚀 EXACT SLOTS LOGIC (BASE-4 DECODING)
     # 🎰 Dice returns a value from 1 to 64
     v0 = dice_value - 1
     reel1 = v0 % 4
@@ -758,7 +768,7 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
         if is_any_combo:
             is_win = True
     elif target == "unique": 
-        if is_unique_combo:
+        if is_unique_combo: # 🚀 FIX: Ab yahan exact reels par condition check hoti hai
             is_win = True
             
     if is_win:
@@ -772,7 +782,7 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
             reward_name = "Gift box"
             
         bot.send_message(chat_id, f"<tg-emoji emoji-id='{CONFIG['TEXT_EMOJI']['WIN']}'>🎉</tg-emoji> <b>WINNER!</b>\n\nYou won a {reward_name}!")
-        g = gifts_catalog_col.find_one({"name": {"$regex": f"^{reward_name}$", "$options": "i"}})
+        g = next((item for item in GIFTS_CACHE if item["name"].lower() == reward_name.lower()), None)
         price = g["price"] if g else 0
         send_real_telegram_gift(chat_id, reward_name, price, "You won the slot machine!")
     else:
@@ -849,7 +859,6 @@ def got_payment(message):
         if gift_name.lower() == "teddy bear": users_col.update_one({"_id": user_id}, {"$set": {"bought_teddy": True}})
         elif gift_name.lower() == "heart": users_col.update_one({"_id": user_id}, {"$set": {"bought_heart": True}})
             
-        # 🔴 FIX: 7 Stars wale gifts (Heart/Teddy) ko free auto-comment bhejega
         if amount == 7:
             auto_comment = "A small gift by @redcube. Join today and earn and win money. Contact @Cinex"
             threading.Thread(target=send_real_telegram_gift, args=(message.chat.id, gift_name, amount, auto_comment)).start()
