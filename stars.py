@@ -76,25 +76,31 @@ pending_rains_col = db["pending_rains"]
 
 bot = telebot.TeleBot(CONFIG["BOT_TOKEN"], parse_mode="HTML", threaded=True)
 
-# 🛠 DEFAULT GIFTS SEEDING
+# 🛠 DEFAULT GIFTS SEEDING & PRICE UPDATING
+default_gifts = [
+    {"name": "Champagne", "id": CONFIG["REAL_GIFT_IDS"]["Champagne"], "price": 49},
+    {"name": "Diamond", "id": CONFIG["REAL_GIFT_IDS"]["Diamond"], "price": 99},
+    {"name": "Ring", "id": CONFIG["REAL_GIFT_IDS"]["Ring"], "price": 99},
+    {"name": "Trophy", "id": CONFIG["REAL_GIFT_IDS"]["Trophy"], "price": 99},
+    {"name": "Rocket", "id": CONFIG["REAL_GIFT_IDS"]["Rocket"], "price": 49},
+    {"name": "Bouquet", "id": CONFIG["REAL_GIFT_IDS"]["Bouquet"], "price": 49},
+    {"name": "Cake", "id": CONFIG["REAL_GIFT_IDS"]["Cake"], "price": 49},
+    {"name": "Rose", "id": CONFIG["REAL_GIFT_IDS"]["Rose"], "price": 24},
+    {"name": "Gift box", "id": CONFIG["REAL_GIFT_IDS"]["Gift box"], "price": 24},
+    {"name": "Teddy bear", "id": CONFIG["REAL_GIFT_IDS"]["Teddy bear"], "price": 7},
+    {"name": "Heart", "id": CONFIG["REAL_GIFT_IDS"]["Heart"], "price": 7}
+]
+
 if gifts_catalog_col.count_documents({}) == 0:
-    default_gifts = [
-        {"name": "Champagne", "id": CONFIG["REAL_GIFT_IDS"]["Champagne"], "price": 48},
-        {"name": "Diamond", "id": CONFIG["REAL_GIFT_IDS"]["Diamond"], "price": 98},
-        {"name": "Ring", "id": CONFIG["REAL_GIFT_IDS"]["Ring"], "price": 98},
-        {"name": "Trophy", "id": CONFIG["REAL_GIFT_IDS"]["Trophy"], "price": 98},
-        {"name": "Rocket", "id": CONFIG["REAL_GIFT_IDS"]["Rocket"], "price": 48},
-        {"name": "Bouquet", "id": CONFIG["REAL_GIFT_IDS"]["Bouquet"], "price": 48},
-        {"name": "Cake", "id": CONFIG["REAL_GIFT_IDS"]["Cake"], "price": 48},
-        {"name": "Rose", "id": CONFIG["REAL_GIFT_IDS"]["Rose"], "price": 23},
-        {"name": "Gift box", "id": CONFIG["REAL_GIFT_IDS"]["Gift box"], "price": 23},
-        {"name": "Teddy bear", "id": CONFIG["REAL_GIFT_IDS"]["Teddy bear"], "price": 1},
-        {"name": "Heart", "id": CONFIG["REAL_GIFT_IDS"]["Heart"], "price": 1}
-    ]
     gifts_catalog_col.insert_many(default_gifts)
 else:
-    for gift_name, correct_id in CONFIG["REAL_GIFT_IDS"].items():
-        gifts_catalog_col.update_one({"name": {"$regex": f"^{gift_name}$", "$options": "i"}}, {"$set": {"id": correct_id}}, upsert=False)
+    # 🔴 FIX: Ye loop purane db prices ko automatically naye prices pe update kar dega!
+    for g in default_gifts:
+        gifts_catalog_col.update_one(
+            {"name": {"$regex": f"^{g['name']}$", "$options": "i"}}, 
+            {"$set": {"id": g["id"], "price": g["price"]}}, 
+            upsert=False
+        )
 
 # ==========================================
 # 🛡 DATABASE HELPERS
@@ -264,21 +270,22 @@ def topup_kb(l):
 
 def luck_kb(l):
     t = LANG[l]
+    # 🔴 FIX: 6->10, 10->15, 20->30
     return kb(
-        [("6 ⭐️", "slot_6", "primary", "STAR"), ("10 ⭐️", "slot_10", None, "STAR")],
-        [("20 ⭐️", "slot_20", "success", "STAR")],
+        [("10 ⭐️", "slot_10", "primary", "STAR"), ("15 ⭐️", "slot_15", None, "STAR")],
+        [("30 ⭐️", "slot_30", "success", "STAR")],
         [(t["btn_back"], "menu_main", "danger", "BACK")]
     )
 
 def slot_options_kb(bet, l):
     rows = []
     
-    if bet == 6:
-        rows.append([("Any Combo (Win Rose)", "slotbet_6_any", "primary"), ("Unique Combo (Win Teddy)", "slotbet_6_unique", "success")])
-    elif bet == 10:
-        rows.append([("Any Combo (Win Flower)", "slotbet_10_any", "primary"), ("Unique Combo (Win Rose)", "slotbet_10_unique", "success")])
-    elif bet == 20:
-        rows.append([("Any Combo (Win Ring)", "slotbet_20_any", "primary"), ("Unique Combo (Win Flower)", "slotbet_20_unique", "success")])
+    if bet == 10:
+        rows.append([("Any Combo (Win Rose)", "slotbet_10_any", "primary"), ("Unique Combo (Win Teddy)", "slotbet_10_unique", "success")])
+    elif bet == 15:
+        rows.append([("Any Combo (Win Flower)", "slotbet_15_any", "primary"), ("Unique Combo (Win Rose)", "slotbet_15_unique", "success")])
+    elif bet == 30:
+        rows.append([("Any Combo (Win Ring)", "slotbet_30_any", "primary"), ("Unique Combo (Win Flower)", "slotbet_30_unique", "success")])
         
     rows.append([(LANG[l]["btn_back"], "menu_luck", "danger", "BACK")])
     return kb(*rows)
@@ -399,7 +406,8 @@ def rain_command(message):
     actual_gift_name = g["name"]
     gift_unit_price = g["price"]
     
-    if actual_gift_name.lower() in ["teddy bear", "heart"] and gift_unit_price == 1:
+    # 🔴 FIX: Teddy aur Heart ab 7 stars ke hain. Rain me inka base price hi lagta hai (no discount).
+    if actual_gift_name.lower() in ["teddy bear", "heart"] and gift_unit_price == 7:
         gift_unit_price = 14
         
     total_cost = gift_unit_price * winners_count
@@ -580,7 +588,6 @@ def start_cmd(message):
 # ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    # 🔴 INSTANT BUTTON RESPONSE: Click karte hi loading icon hat jayega
     try: bot.answer_callback_query(call.id)
     except Exception: pass
     
@@ -675,7 +682,8 @@ def callback_handler(call):
                 try: bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=gifts_kb(lang, updated_user))
                 except Exception: pass
                 
-                if amount == 1:
+                # 🔴 FIX: 7 Stars wale gifts ko free comment prompt jayega 
+                if amount == 7:
                     auto_comment = "A small gift by @redcube. Join today and earn and win money. Contact @Cinex"
                     threading.Thread(target=send_real_telegram_gift, args=(chat_id, gift_name, amount, auto_comment)).start()
                 else:
@@ -744,10 +752,8 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
     is_any_combo = (reel1 == reel2 == reel3)
     
     # 🔴 TEENO ALAG-ALAG = Unique Combo
-    # Unique ka matlab: reel1, reel2 se alag hai, aur reel1, reel3 se alag hai, aur reel2, reel3 se alag hai.
     is_unique_combo = (reel1 != reel2 and reel1 != reel3 and reel2 != reel3)
     
-    # Check Winning Conditions Based on Button Click
     if target == "any": 
         if is_any_combo:
             is_win = True
@@ -756,12 +762,11 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
             is_win = True
             
     if is_win:
-        # Determine reward based on bet
-        if bet == 6:
+        if bet == 10:
             reward_name = "Rose" if target == "any" else "Teddy bear"
-        elif bet == 10:
+        elif bet == 15:
             reward_name = "Bouquet" if target == "any" else "Rose"
-        elif bet == 20:
+        elif bet == 30:
             reward_name = "Ring" if target == "any" else "Bouquet"
         else:
             reward_name = "Gift box"
@@ -844,7 +849,8 @@ def got_payment(message):
         if gift_name.lower() == "teddy bear": users_col.update_one({"_id": user_id}, {"$set": {"bought_teddy": True}})
         elif gift_name.lower() == "heart": users_col.update_one({"_id": user_id}, {"$set": {"bought_heart": True}})
             
-        if amount == 1:
+        # 🔴 FIX: 7 Stars wale gifts (Heart/Teddy) ko free auto-comment bhejega
+        if amount == 7:
             auto_comment = "A small gift by @redcube. Join today and earn and win money. Contact @Cinex"
             threading.Thread(target=send_real_telegram_gift, args=(message.chat.id, gift_name, amount, auto_comment)).start()
         else:
