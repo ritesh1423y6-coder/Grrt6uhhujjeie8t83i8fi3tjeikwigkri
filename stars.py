@@ -1,5 +1,6 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, InlineQueryResultArticle, InputTextMessageContent, BotCommand
+from telebot.apihelper import ApiTelegramException
 from pymongo import MongoClient
 import datetime
 import requests
@@ -95,7 +96,7 @@ def refresh_gifts_cache():
 refresh_gifts_cache()
 
 # ==========================================
-# 🛡 DATABASE HELPERS
+# 🛡 DATABASE HELPERS & UTILS
 # ==========================================
 def get_user(user_id, username=None):
     user = users_col.find_one({"_id": user_id})
@@ -117,6 +118,13 @@ def get_house_bal():
 def safe_delete(chat_id, msg_id):
     try: bot.delete_message(chat_id, msg_id)
     except: pass
+
+def check_user_joined(chat_id, user_id):
+    try:
+        member = bot.get_chat_member(chat_id, user_id)
+        return member.status in ['member', 'administrator', 'creator', 'restricted']
+    except ApiTelegramException:
+        return False
 
 # ==========================================
 # 🎁 REAL TELEGRAM GIFT SENDER
@@ -278,17 +286,17 @@ def gifts_kb(lang_code, user):
     return m
 
 # ==========================================
-# 🎉 GIVEAWAY WIZARD (CLEAN SINGLE-MSG UI)
+# 🎉 GIVEAWAY WIZARD & LOGIC
 # ==========================================
 user_gw_drafts = {}
 
 def reset_gw_draft(user_id):
     user_gw_drafts[user_id] = {
-        "wizard_msg_id": None, "host_chat": None, "prize_type": None,
-        "prize_val": None, "title": "Giveaway", "banner": None,
-        "hosted_by": None, "winners": 1, "duration": 0, "captcha": False,
-        "req_channels": [], "notes": None, "stars_deducted": False,
-        # Requirements toggles
+        "wizard_msg_id": None, "host_chat": None, "host_chat_name": None, 
+        "prize_type": None, "prize_val": None, "title": "Giveaway", 
+        "banner": None, "hosted_by": None, "winners": 1, "duration": 0, 
+        "captcha": False, "req_channels": [], "req_channels_names": [],
+        "notes": None, "stars_deducted": False,
         "req_active": False, "req_name": False, "req_bio": False, 
         "req_premium": False, "req_boost": False, "req_ref": False
     }
@@ -308,8 +316,7 @@ def parse_time_to_seconds(t_str):
     if h: total += int(h.group(1)) * 3600
     if m: total += int(m.group(1)) * 60
     if s: total += int(s.group(1))
-    if total == 0 and t_str.isdigit():
-        total = int(t_str) * 60 
+    if total == 0 and t_str.isdigit(): total = int(t_str) * 60 
     return total
 
 def gw_main_kb():
@@ -329,21 +336,18 @@ def gw_cancel_kb():
     return kb([("Cancel", "menu_cancel_gw", "danger")])
 
 def gw_skip_kb(next_step_data):
-    return kb(
-        [("Skip", next_step_data, "primary")],
-        [("Cancel", "menu_cancel_gw", "danger")]
-    )
+    return kb([("Skip", next_step_data, "primary")], [("Cancel", "menu_cancel_gw", "danger")])
 
 def gw_reqs_kb(draft):
     return kb(
-        [(f"Active in group: {'On' if draft['req_active'] else 'Off'}", "gwr_active", "primary")],
-        [(f"Name contain: {'On' if draft['req_name'] else 'Off'}", "gwr_name", "primary")],
-        [(f"Bio contain: {'On' if draft['req_bio'] else 'Off'}", "gwr_bio", "primary")],
-        [(f"Telegram premium: {'On' if draft['req_premium'] else 'Off'}", "gwr_premium", "primary")],
-        [(f"Boost bonus: {'On' if draft['req_boost'] else 'Off'}", "gwr_boost", "primary")],
-        [(f"Referrals: {'On' if draft['req_ref'] else 'Off'}", "gwr_ref", "primary")],
+        [(f"Active in group: {'On' if draft.get('req_active') else 'Off'}", "gwr_active", "primary")],
+        [(f"Name contain: {'On' if draft.get('req_name') else 'Off'}", "gwr_name", "primary")],
+        [(f"Bio contain: {'On' if draft.get('req_bio') else 'Off'}", "gwr_bio", "primary")],
+        [(f"Telegram premium: {'On' if draft.get('req_premium') else 'Off'}", "gwr_premium", "primary")],
+        [(f"Boost bonus: {'On' if draft.get('req_boost') else 'Off'}", "gwr_boost", "primary")],
+        [(f"Referrals: {'On' if draft.get('req_ref') else 'Off'}", "gwr_ref", "primary")],
         [("Continue -> review", "gw_preview", "success")],
-        [("Back", "menu_cancel_gw", "danger")]
+        [("Cancel", "menu_cancel_gw", "danger")]
     )
 
 def gw_preview_kb():
@@ -353,42 +357,52 @@ def gw_preview_kb():
         [("Cancel", "menu_cancel_gw", "danger")]
     )
 
-# Formatting to match Image 19 perfectly
-def build_giveaway_text(draft, for_preview=False):
-    p_name = f"{draft['prize_val']} Stars" if draft['prize_type'] == 'star' else draft['prize_val']
+def build_giveaway_text(gw_data, preview_mode=False):
+    title = gw_data.get('title', 'Giveaway')
+    p_name = f"{gw_data['prize_val']} Stars" if gw_data['prize_type'] == 'star' else gw_data['prize_val']
     
-    txt = f"<b>{draft['title']}</b>\n"
+    txt = f"<b>{title}</b>\n"
     txt += f"{p_name}\n\n"
     
-    if draft['hosted_by']:
-        txt += f"Hosted by — {draft['hosted_by']}\n\n"
+    if gw_data.get('hosted_by'): txt += f"Hosted by — {gw_data['hosted_by']}\n\n"
         
     txt += "<blockquote><b>To Participate:</b>\n"
-    txt += f"• Join {draft['host_chat']}\n"
-    for c in draft['req_channels']:
-        txt += f"• Join {c}\n"
-    if draft.get('req_premium'): txt += "• Must have Telegram Premium\n"
-    if draft.get('req_boost'): txt += "• Boost the channel for an extra chance\n"
+    txt += f"• Join {gw_data.get('host_chat_name', gw_data['host_chat'])}\n"
+    
+    if 'req_channels_names' in gw_data and gw_data['req_channels_names']:
+        for c in gw_data['req_channels_names']: txt += f"• Join {c}\n"
+        
+    if gw_data.get('req_premium'): txt += "• Must have Telegram Premium\n"
+    if gw_data.get('req_boost'): txt += "• Boost the channel for an extra chance\n"
     txt += "• Tap Participate</blockquote>\n\n"
     
-    if draft['notes']:
-        txt += f"{draft['notes']}\n\n"
+    if gw_data.get('notes'): txt += f"{gw_data['notes']}\n\n"
         
-    p_count = len(draft.get('participants', []))
+    p_count = len(gw_data.get('participants', []))
     txt += f"Participants: {p_count}\n"
-    txt += f"Winners: {draft['winners']}\n\n"
+    txt += f"Winners: {gw_data['winners']}\n\n"
     
-    if for_preview:
-        # Static text for preview so it doesn't change rapidly
-        txt += f"Giveaway Ends In: {datetime.timedelta(seconds=draft['duration'])}"
+    if preview_mode:
+        txt += f"Giveaway Ends In: <b>{datetime.timedelta(seconds=gw_data['duration'])}</b>"
     else:
-        end_date = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=draft['duration'])
-        # You can customize time left format string if needed
-        txt += f"Giveaway Ends In: {end_date.strftime('%d %b %Y, %I:%M %p UTC')}"
+        # Native Telegram Live Countdown using Unix Timestamp format: <t:UNIX_TIME:R>
+        end_ts = int(gw_data['end_time'].timestamp())
+        txt += f"Giveaway Ends In: <t:{end_ts}:R>\n"
+        txt += f"<i>(<t:{end_ts}:f>)</i>"
         
     return txt
 
-# --- STEP HANDLERS (With Instant Delete & Msg Editing) ---
+def update_gw_post_participants(gw_id):
+    gw = giveaways_col.find_one({"_id": gw_id})
+    if not gw or not gw.get('msg_id'): return
+    try:
+        txt = build_giveaway_text(gw, preview_mode=False)
+        markup = kb([("Join Giveaway", f"gw_join_{gw_id}", "success")])
+        if gw.get('banner'): bot.edit_message_caption(txt, chat_id=gw['host_chat'], message_id=gw['msg_id'], reply_markup=markup, parse_mode="HTML")
+        else: bot.edit_message_text(txt, chat_id=gw['host_chat'], message_id=gw['msg_id'], reply_markup=markup, parse_mode="HTML")
+    except Exception: pass
+
+# --- GW STEP HANDLERS ---
 def gw_step_host(m):
     safe_delete(m.chat.id, m.message_id)
     if not m.text: return
@@ -396,13 +410,15 @@ def gw_step_host(m):
     chat_id_to_check = m.text.strip()
     
     try:
+        chat_obj = bot.get_chat(chat_id_to_check)
         member = bot.get_chat_member(chat_id_to_check, bot.get_me().id)
         if member.status not in ['administrator', 'creator']: raise Exception("Not admin")
+        draft['host_chat'] = chat_id_to_check
+        draft['host_chat_name'] = f"@{chat_obj.username}" if chat_obj.username else chat_obj.title
     except Exception:
         bot.edit_message_text(f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>I am not an Admin in {chat_id_to_check}!</b>\n\nMake sure the bot is an administrator in that chat, then send the @username or ID again:", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_cancel_kb())
         return bot.register_next_step_handler_by_chat_id(m.chat.id, gw_step_host)
 
-    draft['host_chat'] = chat_id_to_check
     bot.edit_message_text(f"<tg-emoji emoji-id='{TE['GIFT']}'>🎁</tg-emoji> <b>Giveaway Prize</b>\n\nWhat will the winners receive?", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_prize_kb())
 
 def gw_step_star_amt(m):
@@ -424,7 +440,7 @@ def gw_step_star_amt(m):
     draft['prize_val'] = amt
     draft['stars_deducted'] = True
     
-    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['TICKET']}'>📝</tg-emoji> <b>Send giveaway title</b> (or click Skip for default 'Giveaway')", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_ask_banner"))
+    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['TICKET']}'>📝</tg-emoji> <b>Send giveaway title</b> (or click Skip for default)", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_ask_banner"))
     bot.register_next_step_handler_by_chat_id(m.chat.id, gw_step_title)
 
 def gw_step_custom_name(m):
@@ -432,8 +448,7 @@ def gw_step_custom_name(m):
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
     draft['prize_val'] = m.text
-    
-    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['TICKET']}'>📝</tg-emoji> <b>Send giveaway title</b> (or click Skip for default 'Giveaway')", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_ask_banner"))
+    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['TICKET']}'>📝</tg-emoji> <b>Send giveaway title</b> (or click Skip for default)", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_ask_banner"))
     bot.register_next_step_handler_by_chat_id(m.chat.id, gw_step_title)
 
 def gw_step_title(m):
@@ -480,14 +495,30 @@ def gw_step_duration(m):
         
     draft['duration'] = secs
     markup = kb([("Enable", "gw_set_cap_1", "success"), ("Disable", "gw_set_cap_0", "danger")], [("Cancel", "menu_cancel_gw", "primary")])
-    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['PROFILE']}'>🤖</tg-emoji> <b>Captcha</b>\nDo you want anti-bots in this giveaway? Entries then go through the bot with a quick math check.", m.chat.id, draft['wizard_msg_id'], reply_markup=markup)
+    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['PROFILE']}'>🤖</tg-emoji> <b>Captcha</b>\nDo you want anti-bots in this giveaway?", m.chat.id, draft['wizard_msg_id'], reply_markup=markup)
 
 def gw_step_channels(m):
     safe_delete(m.chat.id, m.message_id)
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
-    draft['req_channels'] = m.text.split()
-    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['DOWN']}'>📝</tg-emoji> <b>Additional Notes</b>\nRules, shoutouts, links - anything you want participants to see.", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_edit_reqs"))
+    channels = m.text.split()
+    
+    valid_ids = []
+    valid_names = []
+    for ch in channels:
+        try:
+            chat_obj = bot.get_chat(ch)
+            member = bot.get_chat_member(ch, bot.get_me().id)
+            if member.status not in ['administrator', 'creator']: raise Exception("Not admin")
+            valid_ids.append(ch)
+            valid_names.append(f"@{chat_obj.username}" if chat_obj.username else chat_obj.title)
+        except Exception:
+            bot.edit_message_text(f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>I am not an Admin in {ch}!</b>\n\nMake sure I am an admin in all required channels, then send the list again:", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_cancel_kb())
+            return bot.register_next_step_handler_by_chat_id(m.chat.id, gw_step_channels)
+            
+    draft['req_channels'] = valid_ids
+    draft['req_channels_names'] = valid_names
+    bot.edit_message_text(f"<tg-emoji emoji-id='{TE['DOWN']}'>📝</tg-emoji> <b>Additional Notes</b>\nRules, links - anything you want participants to see (or Skip).", m.chat.id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_edit_reqs"))
     bot.register_next_step_handler_by_chat_id(m.chat.id, gw_step_notes)
 
 def gw_step_notes(m):
@@ -508,8 +539,7 @@ def admin_promo(message):
         expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=int(hours))
         promos_col.update_one({"_id": code.upper()}, {"$set": {"amount": int(amount), "max_users": int(users), "used_by": [], "expires_at": expires}}, upsert=True)
         bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> Promo {code.upper()} created!")
-    except ValueError:
-        bot.reply_to(message, "❌ Invalid! Use: `/qpromo CODE AMOUNT USERS HOURS`", parse_mode="Markdown")
+    except ValueError: bot.reply_to(message, "❌ Invalid! Use: `/qpromo CODE AMOUNT USERS HOURS`", parse_mode="Markdown")
 
 @bot.message_handler(commands=['addgift'])
 def admin_addgift(message):
@@ -522,8 +552,7 @@ def admin_addgift(message):
         gifts_catalog_col.update_one({"name": gift_name}, {"$set": {"id": gift_id, "price": amount}}, upsert=True)
         refresh_gifts_cache()
         bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> <b>Gift Added!</b>\nName: {gift_name}\nID: <code>{gift_id}</code>\nPrice: {amount} ⭐️")
-    except Exception:
-        bot.reply_to(message, "❌ Format: `/addgift Gift_Name Gift_ID Amount`", parse_mode="Markdown")
+    except Exception: bot.reply_to(message, "❌ Format: `/addgift Gift_Name Gift_ID Amount`", parse_mode="Markdown")
 
 @bot.message_handler(commands=['giftsend'])
 def admin_giftsend(message):
@@ -541,8 +570,7 @@ def admin_giftsend(message):
         actual_name = g["name"] if g else gift_name
         threading.Thread(target=send_real_telegram_gift, args=(u["_id"], actual_name, price, comment)).start()
         bot.send_message(message.chat.id, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> Gift {actual_name} action triggered to {target}!")
-    except Exception:
-        bot.reply_to(message, "❌ Format: `/giftsend UserID_or_@User Gift_Name Comment`", parse_mode="Markdown")
+    except Exception: bot.reply_to(message, "❌ Format: `/giftsend UserID_or_@User Gift_Name Comment`", parse_mode="Markdown")
 
 @bot.message_handler(commands=['housebal'])
 def public_housebal(message):
@@ -556,8 +584,7 @@ def admin_topup(message):
         amount = int(parts[1])
         update_house_bal(amount)
         bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> Successfully added {amount} ⭐️ to the Bot Reserve. Current balance: {get_house_bal()} ⭐️")
-    except Exception:
-        bot.reply_to(message, "❌ Format: `/topup Amount`")
+    except Exception: bot.reply_to(message, "❌ Format: `/topup Amount`")
 
 # ==========================================
 # 🌧 GROUP RAIN & LEADERBOARD
@@ -571,8 +598,7 @@ def rain_command(message):
         gift_name = parts[1].replace("_", " ")
         winners_count = int(parts[2])
         comment = parts[3] if len(parts) > 3 else "Group Rain Gift!"
-    except Exception:
-        return bot.reply_to(message, "❌ <b>Format:</b> <code>/rain Gift_Name Amount_of_Winners Comment</code>\n<b>Example:</b> <code>/rain Heart 1 Happy</code>", parse_mode="HTML")
+    except Exception: return bot.reply_to(message, "❌ <b>Format:</b> <code>/rain Gift_Name Amount_of_Winners Comment</code>\n<b>Example:</b> <code>/rain Heart 1 Happy</code>", parse_mode="HTML")
         
     g = next((item for item in GIFTS_CACHE if item["name"].lower() == gift_name.lower()), None)
     if not g: return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Gift not found!")
@@ -620,11 +646,9 @@ def rain_command(message):
             pending_rains_col.insert_one({"_id": rain_id, "user_id": wid, "gift_name": actual_gift_name, "price": gift_unit_price, "comment": comment})
             markup = kb([(LANG["en"]["rain_claim"], f"https://t.me/{CONFIG['BOT_USERNAME']}?start=rain_{rain_id}", "success")])
             bot.send_message(group_id, f"Hey <a href='tg://user?id={wid}'>{wname}</a>, you won a <b>{actual_gift_name}</b>! Start the bot to claim.", reply_markup=markup, parse_mode="HTML")
-        else:
-            send_real_telegram_gift(wid, actual_gift_name, gift_unit_price, comment)
+        else: send_real_telegram_gift(wid, actual_gift_name, gift_unit_price, comment)
 
-    for w in winners:
-        threading.Thread(target=handle_rain_winner, args=(w["user_id"], w.get("username", "User"), message.chat.id)).start()
+    for w in winners: threading.Thread(target=handle_rain_winner, args=(w["user_id"], w.get("username", "User"), message.chat.id)).start()
 
 @bot.message_handler(commands=['rainlb'])
 def rainlb_command(message):
@@ -661,7 +685,6 @@ def inline_checks(inline_query):
             
         check_id = str(uuid.uuid4().hex)[:10]
         markup = kb([(LANG["en"]["check_claim"].replace("⭐️", f"{amount} ⭐️"), f"https://t.me/{CONFIG['BOT_USERNAME']}?start=chk_{check_id}", "success")])
-        
         checks_col.insert_one({"_id": check_id, "creator": inline_query.from_user.id, "amount": amount, "status": "active"})
         
         res = InlineQueryResultArticle(
@@ -674,11 +697,10 @@ def inline_checks(inline_query):
 
 @bot.chosen_inline_handler(func=lambda chosen_inline_result: True)
 def chosen_check(chosen_inline_result):
-    if chosen_inline_result.inline_message_id:
-        checks_col.update_one({"_id": chosen_inline_result.result_id}, {"$set": {"inline_msg_id": chosen_inline_result.inline_message_id}})
+    if chosen_inline_result.inline_message_id: checks_col.update_one({"_id": chosen_inline_result.result_id}, {"$set": {"inline_msg_id": chosen_inline_result.inline_message_id}})
         
 # ==========================================
-# 🚀 USER HANDLERS (START MENU & RAIN/CHECK CLAIM)
+# 🚀 USER HANDLERS (START MENU)
 # ==========================================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
@@ -692,11 +714,8 @@ def start_cmd(message):
             check_id = param.replace("chk_", "")
             chk = checks_col.find_one({"_id": check_id})
             
-            if not chk or chk["status"] != "active":
-                return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>Check already claimed or bounced.</b>")
-                
-            if chk["creator"] == message.from_user.id:
-                return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> You cannot claim your own check!")
+            if not chk or chk["status"] != "active": return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>Check already claimed or bounced.</b>")
+            if chk["creator"] == message.from_user.id: return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> You cannot claim your own check!")
                 
             creator_user = get_user(chk["creator"])
             if creator_user["balance"] < chk["amount"]:
@@ -725,11 +744,11 @@ def start_cmd(message):
                 threading.Thread(target=send_real_telegram_gift, args=(message.from_user.id, r["gift_name"], r["price"], r["comment"])).start()
                 return
 
-        elif param.startswith("gwc_"): # Captcha flow for giveaways
+        elif param.startswith("gwc_"): 
             gw_id = param.replace("gwc_", "")
             gw = giveaways_col.find_one({"_id": gw_id})
             if gw and gw['status'] == 'active':
-                if message.from_user.id in gw['participants']:
+                if message.from_user.id in gw.get('participants', []):
                     return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> You are already participating!")
                 a, b = random.randint(1, 10), random.randint(1, 10)
                 msg = bot.reply_to(message, f"<tg-emoji emoji-id='{TE['PROFILE']}'>🤖</tg-emoji> <b>Captcha Check</b>\nWhat is {a} + {b}?")
@@ -738,7 +757,6 @@ def start_cmd(message):
 
     welcome_msg = f"<b>Welcome, {message.from_user.first_name}!</b> <tg-emoji emoji-id='{TE['WELCOME']}'>👋</tg-emoji>"
     bot.send_message(message.chat.id, welcome_msg)
-    
     text = get_start_text(user["lang"], message.from_user.first_name, user["balance"])
     bot.send_message(message.chat.id, text, reply_markup=main_menu_kb(user["lang"]))
 
@@ -747,17 +765,7 @@ def process_gw_captcha(message, gw_id, ans):
         giveaways_col.update_one({"_id": gw_id}, {"$addToSet": {"participants": message.from_user.id}})
         update_gw_post_participants(gw_id)
         bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> <b>Captcha solved!</b> You are now entered in the giveaway.")
-    else:
-        bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>Incorrect!</b> Please try joining the giveaway again.")
-
-def update_gw_post_participants(gw_id):
-    gw = giveaways_col.find_one({"_id": gw_id})
-    if not gw or not gw.get('msg_id'): return
-    try:
-        count = len(gw.get('participants', []))
-        # Optional: Edit the post to update real-time participant count. If blockquote format gets messy via caption updates, skipping is better.
-        pass
-    except: pass
+    else: bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>Incorrect!</b> Please try joining the giveaway again.")
 
 # ==========================================
 # 🔄 FAST CALLBACK HANDLER
@@ -772,13 +780,25 @@ def gw_join_handler(call):
     if call.from_user.id in gw.get('participants', []):
         return bot.answer_callback_query(call.id, "You are already participating!", show_alert=True)
         
-    if gw['captcha']:
+    # Strict Join Checker
+    if not check_user_joined(gw['host_chat'], call.from_user.id):
+        return bot.answer_callback_query(call.id, f"❌ You must join {gw.get('host_chat_name', gw['host_chat'])} first!", show_alert=True)
+        
+    for rc in gw.get('req_channels', []):
+        if not check_user_joined(rc, call.from_user.id):
+            return bot.answer_callback_query(call.id, f"❌ You must join all required channels first!", show_alert=True)
+            
+    # Premium check
+    if gw.get('req_premium'):
+        if not call.from_user.is_premium:
+            return bot.answer_callback_query(call.id, "❌ You must have Telegram Premium to participate.", show_alert=True)
+        
+    if gw.get('captcha'):
         return bot.answer_callback_query(call.id, "Please verify captcha in bot PM", url=f"https://t.me/{CONFIG['BOT_USERNAME']}?start=gwc_{gw_id}")
         
     giveaways_col.update_one({"_id": gw_id}, {"$addToSet": {"participants": call.from_user.id}})
     update_gw_post_participants(gw_id)
-    bot.answer_callback_query(call.id, "You have successfully entered the giveaway!", show_alert=True)
-
+    bot.answer_callback_query(call.id, "✅ You have successfully entered the giveaway!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('gwr_'))
 def gw_reqs_toggle_handler(call):
@@ -788,19 +808,15 @@ def gw_reqs_toggle_handler(call):
     chat_id = call.message.chat.id
     draft = get_gw_draft(user_id)
     
-    # Toggle logic
     key = call.data.replace('gwr_', 'req_')
     if key in draft: draft[key] = not draft[key]
     
     try: bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=gw_reqs_kb(draft))
     except: pass
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('gw_') or call.data == 'menu_cancel_gw')
 def gw_callbacks(call):
-    # Ignoring joining/req callbacks handled above
     if call.data.startswith('gw_join_') or call.data.startswith('gwr_'): return 
-    
     try: bot.answer_callback_query(call.id)
     except: pass
     
@@ -859,14 +875,14 @@ def gw_callbacks(call):
             bot.register_next_step_handler_by_chat_id(chat_id, gw_step_channels)
             
         elif data == "gw_ask_notes":
-            bot.edit_message_text(f"<tg-emoji emoji-id='{TE['DOWN']}'>📝</tg-emoji> <b>Additional Notes</b>\nWant to add extra info to your giveaway? Rules, shoutouts, links - anything you want participants to see.", chat_id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_edit_reqs"))
+            bot.edit_message_text(f"<tg-emoji emoji-id='{TE['DOWN']}'>📝</tg-emoji> <b>Additional Notes</b>\nRules, links - anything you want participants to see (or click Skip).", chat_id, draft['wizard_msg_id'], reply_markup=gw_skip_kb("gw_edit_reqs"))
             bot.register_next_step_handler_by_chat_id(chat_id, gw_step_notes)
             
         elif data == "gw_edit_reqs":
             bot.edit_message_text(f"<tg-emoji emoji-id='{TE['TICKET']}'>🛠</tg-emoji> <b>Requirements</b>\nConfigure participation restrictions. Continue when ready.", chat_id, draft['wizard_msg_id'], reply_markup=gw_reqs_kb(draft))
             
         elif data == "gw_preview":
-            txt = build_giveaway_text(draft, for_preview=True)
+            txt = build_giveaway_text(draft, preview_mode=True)
             bot.edit_message_text(f"<tg-emoji emoji-id='{TE['SUCCESS']}'>📋</tg-emoji> <b>Message Layout / Preview</b>\n\n{txt}", chat_id, draft['wizard_msg_id'], reply_markup=gw_preview_kb(), parse_mode="HTML")
             
         elif data == "gw_publish":
@@ -874,16 +890,17 @@ def gw_callbacks(call):
             gw_id = str(uuid.uuid4().hex)[:10]
             
             giveaways_col.insert_one({
-                "_id": gw_id, "creator": user_id, "host_chat": draft['host_chat'],
+                "_id": gw_id, "creator": user_id, "host_chat": draft['host_chat'], "host_chat_name": draft['host_chat_name'],
                 "prize_type": draft['prize_type'], "prize_val": draft['prize_val'],
                 "winners": draft['winners'], "captcha": draft['captcha'],
-                "req_channels": draft['req_channels'], "end_time": end_time,
-                "status": "active", "participants": [], "notes": draft['notes'],
-                "hosted_by": draft['hosted_by'], "title": draft['title'],
+                "req_channels": draft['req_channels'], "req_channels_names": draft.get('req_channels_names', []),
+                "end_time": end_time, "status": "active", "participants": [], "notes": draft['notes'],
+                "hosted_by": draft['hosted_by'], "title": draft.get('title', 'Giveaway'),
                 "req_premium": draft.get('req_premium'), "req_boost": draft.get('req_boost')
             })
             
-            txt = build_giveaway_text(draft, for_preview=False)
+            # Rebuild with preview_mode=False for Unix Timestamp tags
+            txt = build_giveaway_text(draft, preview_mode=False)
             markup = kb([("Join Giveaway", f"gw_join_{gw_id}", "success")])
             
             try:
@@ -898,19 +915,17 @@ def gw_callbacks(call):
                 
         elif data == "gw_manage":
             gws = list(giveaways_col.find({"creator": user_id}).sort("_id", -1).limit(10))
-            if not gws:
-                txt = f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> You haven't hosted any giveaways yet."
+            if not gws: txt = f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> You haven't hosted any giveaways yet."
             else:
                 txt = f"<tg-emoji emoji-id='{TE['PROFILE']}'>🗂</tg-emoji> <b>Your Giveaways:</b>\n\n"
                 for i, gw in enumerate(gws, 1):
                     status = "🟢 Active" if gw['status'] == 'active' else "🔴 Ended"
                     p_name = f"{gw['prize_val']} Stars" if gw['prize_type'] == 'star' else gw['prize_val']
-                    txt += f"{i}. <b>{gw['title']}</b> - {p_name} ({status})\n"
-                    txt += f"👥 {len(gw['participants'])} | 🏆 {gw['winners']}\n\n"
+                    txt += f"{i}. <b>{gw.get('title', 'Giveaway')}</b> - {p_name} ({status})\n"
+                    txt += f"👥 {len(gw.get('participants', []))} | 🏆 {gw['winners']}\n\n"
             bot.edit_message_text(txt, chat_id, call.message.id, reply_markup=kb([("Back", "menu_giveaway", "danger")]))
             
-    except Exception as e:
-        print(f"GW Callback Error: {e}")
+    except Exception as e: print(f"GW Callback Error: {e}")
 
 @bot.callback_query_handler(func=lambda call: not call.data.startswith('gw_') and not call.data.startswith('gwr_') and call.data != 'menu_cancel_gw')
 def callback_handler(call):
@@ -1032,8 +1047,7 @@ def callback_handler(call):
             except Exception: pass
             threading.Thread(target=send_real_telegram_gift, args=(chat_id, gift_name, amount, None)).start()
             
-    except Exception as e:
-        print(f"Error in Callback: {e}")
+    except Exception as e: print(f"Error in Callback: {e}")
 
 # ==========================================
 # 💰 PROCESS CUSTOM TOPUP
@@ -1042,8 +1056,7 @@ def process_custom_topup(message):
     safe_delete(message.chat.id, message.message_id)
     if not message.text or not message.text.isdigit(): return
     amount = int(message.text)
-    if amount < 1:
-        return bot.send_message(message.chat.id, f"<tg-emoji emoji-id='{CONFIG['TEXT_EMOJI']['ERROR']}'>❌</tg-emoji> Minimum amount is 1 ⭐️")
+    if amount < 1: return bot.send_message(message.chat.id, f"<tg-emoji emoji-id='{CONFIG['TEXT_EMOJI']['ERROR']}'>❌</tg-emoji> Minimum amount is 1 ⭐️")
         
     bot.send_invoice(
         chat_id=message.chat.id, title="Top-Up Balance", description=f"Top up {amount} ⭐️", 
@@ -1093,8 +1106,7 @@ def process_slot_result(chat_id, message_id, user_id, bet, target, dice_value):
 # ==========================================
 def process_gift_comment(message, gift_name, amount):
     safe_delete(message.chat.id, message.message_id)
-    if not message.text:
-        return bot.send_message(message.chat.id, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Please send a valid text comment. Try buying again.")
+    if not message.text: return bot.send_message(message.chat.id, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Please send a valid text comment. Try buying again.")
     threading.Thread(target=send_real_telegram_gift, args=(message.chat.id, gift_name, amount, message.text)).start()
 
 # ==========================================
@@ -1183,7 +1195,7 @@ def giveaway_worker():
                 for w_id in winner_ids:
                     if gw['prize_type'] == 'star':
                         update_balance(w_id, gw['prize_val'])
-                        try: bot.send_message(w_id, f"<tg-emoji emoji-id='{TE['WIN']}'>🎉</tg-emoji> <b>Congratulations!</b> You won {gw['prize_val']} <tg-emoji emoji-id='{TE['STAR']}'>⭐️</tg-emoji> in a giveaway from {gw['host_chat']}!")
+                        try: bot.send_message(w_id, f"<tg-emoji emoji-id='{TE['WIN']}'>🎉</tg-emoji> <b>Congratulations!</b> You won {gw['prize_val']} <tg-emoji emoji-id='{TE['STAR']}'>⭐️</tg-emoji> in a giveaway from {gw.get('host_chat_name', gw['host_chat'])}!")
                         except: pass
                     else:
                         try: bot.send_message(w_id, f"<tg-emoji emoji-id='{TE['WIN']}'>🎉</tg-emoji> <b>Congratulations!</b> You won <b>{gw['prize_val']}</b> in a giveaway! Contact the host to claim it.")
