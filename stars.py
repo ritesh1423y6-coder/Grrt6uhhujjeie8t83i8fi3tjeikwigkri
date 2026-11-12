@@ -317,7 +317,7 @@ def gifts_kb(lang_code, user):
     return m
 
 # ==========================================
-# 🎉 GIVEAWAY SYSTEM (NEW)
+# 🎉 GIVEAWAY SYSTEM (NEW & PREMIUM)
 # ==========================================
 user_gw_drafts = {}
 
@@ -348,9 +348,9 @@ def parse_time_to_seconds(t_str):
 
 def gw_main_kb():
     return kb(
-        [("🎉 Start new giveaway", "gw_new", "primary")],
-        [("🗂 Manage Giveaways", "gw_manage", "success")],
-        [("↩️ Back to menu", "menu_main", "danger")]
+        [(f"🎉 Start new giveaway", "gw_new", "primary")],
+        [(f"🗂 Manage Giveaways", "gw_manage", "success")],
+        [(f"↩️ Back to menu", "menu_main", "danger")]
     )
 
 def gw_prize_kb():
@@ -362,23 +362,22 @@ def gw_prize_kb():
 def gw_skip_kb(next_step_data):
     return kb(
         [("➡️ Skip", next_step_data, "primary")],
-        [("↩️ Back", "menu_giveaway", "danger")]
+        [("↩️ Cancel & Menu", "menu_giveaway", "danger")]
     )
 
 def gw_preview_kb():
     return kb(
         [("✅ Continue post", "gw_publish", "success")],
-        [("🛠 Edit requirements", "gw_reqs_menu", "primary")],
         [("❌ Cancel", "menu_giveaway", "danger")]
     )
 
 def build_giveaway_text(draft):
-    p_name = f"{draft['prize_val']} ⭐ Stars" if draft['prize_type'] == 'star' else draft['prize_val']
+    p_name = f"{draft['prize_val']} <tg-emoji emoji-id='{TE['STAR']}'>⭐️</tg-emoji> Stars" if draft['prize_type'] == 'star' else draft['prize_val']
     
-    txt = f"🎉 <b>{draft['title']}</b>\n\n"
-    txt += f"🎁 <b>Prize:</b> {p_name}\n"
+    txt = f"<tg-emoji emoji-id='{TE['WIN']}'>🎉</tg-emoji> <b>{draft['title']}</b>\n\n"
+    txt += f"<tg-emoji emoji-id='{TE['GIFT']}'>🎁</tg-emoji> <b>Prize:</b> {p_name}\n"
     if draft['hosted_by']:
-        txt += f"👤 <b>Hosted by:</b> {draft['hosted_by']}\n"
+        txt += f"<tg-emoji emoji-id='{TE['PROFILE']}'>👤</tg-emoji> <b>Hosted by:</b> {draft['hosted_by']}\n"
         
     txt += "\n<b>To Participate:</b>\n"
     if draft['req_channels']:
@@ -386,198 +385,112 @@ def build_giveaway_text(draft):
             txt += f"• Join {c}\n"
     txt += "• Tap Participate\n\n"
     
-    txt += f"👥 <b>Participants:</b> 0\n"
-    txt += f"🏆 <b>Winners:</b> {draft['winners']}\n\n"
+    p_count = len(draft.get('participants', []))
+    txt += f"<tg-emoji emoji-id='{TE['PROFILE']}'>👥</tg-emoji> <b>Participants:</b> {p_count}\n"
+    txt += f"<tg-emoji emoji-id='{TE['TICKET']}'>🏆</tg-emoji> <b>Winners:</b> {draft['winners']}\n\n"
     
     if draft['notes']:
-        txt += f"📝 <b>Notes:</b> {draft['notes']}\n\n"
+        txt += f"<tg-emoji emoji-id='{TE['DOWN']}'>📝</tg-emoji> <b>Notes:</b> {draft['notes']}\n\n"
         
     end_date = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=draft['duration'])
     txt += f"⏳ <b>Giveaway Ends In:</b> {end_date.strftime('%d %b %Y, %I:%M %p UTC')}"
     return txt
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('gw_'))
-def gw_callbacks(call):
-    try: bot.answer_callback_query(call.id)
-    except: pass
-    
-    user_id = call.from_user.id
-    chat_id = call.message.chat.id
-    data = call.data
-    draft = get_gw_draft(user_id)
-    bot.clear_step_handler_by_chat_id(chat_id)
-    
-    try:
-        if data == "gw_new":
-            bot.edit_message_text("<b>Giveaway</b>\n\n🎁 What will the winners receive?", chat_id, call.message.id, reply_markup=gw_prize_kb())
-            
-        elif data == "gw_prize_star":
-            draft['prize_type'] = 'star'
-            msg = bot.edit_message_text("⭐ Send the number of Stars for the prize:", chat_id, call.message.id, reply_markup=kb([("↩️ Back", "gw_new", "danger")]))
-            bot.register_next_step_handler(msg, gw_step_star_amt)
-            
-        elif data == "gw_prize_custom":
-            draft['prize_type'] = 'custom'
-            msg = bot.edit_message_text("✏️ Send the prize name (example: Telegram Gift):", chat_id, call.message.id, reply_markup=kb([("↩️ Back", "gw_new", "danger")]))
-            bot.register_next_step_handler(msg, gw_step_custom_name)
-            
-        elif data == "gw_ask_host":
-            msg = bot.edit_message_text("📣 <b>Select Host Chat</b>\nChoose a chat below, or send chat_id or @username", chat_id, call.message.id, reply_markup=kb([("↩️ Back", "gw_new", "danger")]))
-            bot.register_next_step_handler(msg, gw_step_host)
-            
-        elif data == "gw_ask_title":
-            msg = bot.edit_message_text("📝 <b>Send giveaway title</b> (or click Skip for default)", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_ask_banner"))
-            bot.register_next_step_handler(msg, gw_step_title)
-            
-        elif data == "gw_ask_banner":
-            msg = bot.edit_message_text("🖼 <b>Banner</b>\nDo you want a banner? Send image or click Skip.", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_ask_hostedby"))
-            bot.register_next_step_handler(msg, gw_step_banner)
-            
-        elif data == "gw_ask_hostedby":
-            msg = bot.edit_message_text("👤 <b>Send Hosted by</b> (a name or @username)", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_ask_winners"))
-            bot.register_next_step_handler(msg, gw_step_hostedby)
-            
-        elif data == "gw_ask_winners":
-            msg = bot.edit_message_text("🏆 <b>Number of winners (>=1)</b>", chat_id, call.message.id, reply_markup=kb([("↩️ Back", "menu_giveaway", "danger")]))
-            bot.register_next_step_handler(msg, gw_step_winners)
-            
-        elif data == "gw_ask_duration":
-            msg = bot.edit_message_text("⏳ <b>Giveaway duration</b> (e.g., 1d 12h, 10h, 30m, or seconds).", chat_id, call.message.id, reply_markup=kb([("↩️ Back", "menu_giveaway", "danger")]))
-            bot.register_next_step_handler(msg, gw_step_duration)
-            
-        elif data == "gw_ask_captcha":
-            markup = kb([("✅ Enable", "gw_set_cap_1", "success"), ("⛔ Disable", "gw_set_cap_0", "danger")], [("↩️ Back", "menu_giveaway", "primary")])
-            bot.edit_message_text("🤖 <b>Captcha</b>\nDo you want anti-bots in this giveaway? Entries then go through the bot with a quick math check.", chat_id, call.message.id, reply_markup=markup)
-            
-        elif data.startswith("gw_set_cap_"):
-            draft['captcha'] = data.endswith("1")
-            msg = bot.edit_message_text("🔗 <b>Required Channels</b>\nSend additional required channels/groups as chat_id or @username separated by space, or press Skip", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_ask_notes"))
-            bot.register_next_step_handler(msg, gw_step_channels)
-            
-        elif data == "gw_ask_notes":
-            msg = bot.edit_message_text("📝 <b>Additional Notes</b>\nWant to add extra info to your giveaway? Rules, shoutouts, links - anything you want participants to see.", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_preview"))
-            bot.register_next_step_handler(msg, gw_step_notes)
-            
-        elif data == "gw_preview":
-            txt = build_giveaway_text(draft)
-            bot.edit_message_text(f"📋 <b>Message Layout / Preview</b>\n\n{txt}", chat_id, call.message.id, reply_markup=gw_preview_kb())
-            
-        elif data == "gw_publish":
-            end_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=draft['duration'])
-            gw_id = str(uuid.uuid4().hex)[:10]
-            
-            giveaways_col.insert_one({
-                "_id": gw_id,
-                "creator": user_id,
-                "host_chat": draft['host_chat'],
-                "prize_type": draft['prize_type'],
-                "prize_val": draft['prize_val'],
-                "winners": draft['winners'],
-                "captcha": draft['captcha'],
-                "req_channels": draft['req_channels'],
-                "end_time": end_time,
-                "status": "active",
-                "participants": []
-            })
-            
-            txt = build_giveaway_text(draft)
-            markup = kb([("🎉 Participate", f"gw_join_{gw_id}", "success")])
-            
-            try:
-                if draft['banner']:
-                    posted = bot.send_photo(draft['host_chat'], draft['banner'], caption=txt, reply_markup=markup)
-                else:
-                    posted = bot.send_message(draft['host_chat'], txt, reply_markup=markup)
-                    
-                giveaways_col.update_one({"_id": gw_id}, {"$set": {"msg_id": posted.message_id}})
-                bot.edit_message_text("✅ <b>Giveaway Published successfully!</b>", chat_id, call.message.id, reply_markup=kb([("↩️ Back to menu", "menu_main", "primary")]))
-                del user_gw_drafts[user_id]
-            except Exception as e:
-                bot.edit_message_text(f"❌ <b>Error publishing:</b> {e}\nEnsure bot is admin in the target chat.", chat_id, call.message.id, reply_markup=gw_preview_kb())
-                
-        elif data == "gw_manage":
-            bot.edit_message_text("🗂 <b>Manage Giveaways</b>\nFeature coming soon!", chat_id, call.message.id, reply_markup=kb([("↩️ Back", "menu_giveaway", "danger")]))
-            
-    except Exception as e:
-        print(f"GW Callback Error: {e}")
-
-# GW Step Handlers
+# ==========================================
+# 🚀 EXPLICIT STEP HANDLERS FOR GIVEAWAY (FIXED)
+# ==========================================
 def gw_step_star_amt(m):
     if not m.text or not m.text.isdigit():
-        msg = bot.send_message(m.chat.id, "❌ Invalid amount. Enter numbers only:")
+        msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Invalid amount. Enter numbers only:")
         return bot.register_next_step_handler(msg, gw_step_star_amt)
-    draft = get_gw_draft(m.from_user.id)
+    
     u = get_user(m.from_user.id)
     amt = int(m.text)
     if u['balance'] < amt:
-        bot.send_message(m.chat.id, f"❌ Insufficient stars! You have {u['balance']} ⭐.", reply_markup=gw_prize_kb())
+        bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Insufficient stars! You have {u['balance']} <tg-emoji emoji-id='{TE['STAR']}'>⭐️</tg-emoji>.", reply_markup=gw_prize_kb())
         return
-    update_balance(m.from_user.id, -amt) # Deduct immediately, store in bot wallet
+        
+    update_balance(m.from_user.id, -amt)
     update_house_bal(amt)
+    
+    draft = get_gw_draft(m.from_user.id)
     draft['prize_val'] = amt
-    bot.send_message(m.chat.id, f"✅ Prize set to {amt} ⭐. Loading next step...")
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_host', 'from_user': m.from_user, 'message': m}))
+    
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> Prize set to {amt} <tg-emoji emoji-id='{TE['STAR']}'>⭐️</tg-emoji>.\n\n<tg-emoji emoji-id='{TE['DOWN']}'>👇</tg-emoji> <b>Select Host Chat</b>\nChoose a chat below, or send chat_id or @username")
+    bot.register_next_step_handler(msg, gw_step_host)
 
 def gw_step_custom_name(m):
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
     draft['prize_val'] = m.text
-    bot.send_message(m.chat.id, f"✅ Prize set to {m.text}. Loading next step...")
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_host', 'from_user': m.from_user, 'message': m}))
+    
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> Prize set to {m.text}.\n\n<tg-emoji emoji-id='{TE['DOWN']}'>👇</tg-emoji> <b>Select Host Chat</b>\nChoose a chat below, or send chat_id or @username")
+    bot.register_next_step_handler(msg, gw_step_host)
 
 def gw_step_host(m):
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
     draft['host_chat'] = m.text
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_title', 'from_user': m.from_user, 'message': m}))
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['TICKET']}'>📝</tg-emoji> <b>Send giveaway title</b> (or click Skip for default)", reply_markup=gw_skip_kb("gw_ask_banner"))
+    bot.register_next_step_handler(msg, gw_step_title)
 
 def gw_step_title(m):
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
     draft['title'] = m.text
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_banner', 'from_user': m.from_user, 'message': m}))
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['PROFILE']}'>🖼</tg-emoji> <b>Banner</b>\nDo you want a banner? Send image or click Skip.", reply_markup=gw_skip_kb("gw_ask_hostedby"))
+    bot.register_next_step_handler(msg, gw_step_banner)
 
 def gw_step_banner(m):
     draft = get_gw_draft(m.from_user.id)
     if m.photo:
         draft['banner'] = m.photo[-1].file_id
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_hostedby', 'from_user': m.from_user, 'message': m}))
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['PROFILE']}'>👤</tg-emoji> <b>Send Hosted by</b> (a name or @username)", reply_markup=gw_skip_kb("gw_ask_winners"))
+    bot.register_next_step_handler(msg, gw_step_hostedby)
 
 def gw_step_hostedby(m):
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
     draft['hosted_by'] = m.text
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_winners', 'from_user': m.from_user, 'message': m}))
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['WIN']}'>🏆</tg-emoji> <b>Number of winners (>=1)</b>")
+    bot.register_next_step_handler(msg, gw_step_winners)
 
 def gw_step_winners(m):
     if not m.text or not m.text.isdigit() or int(m.text) < 1:
-        msg = bot.send_message(m.chat.id, "❌ Enter a valid number >= 1")
+        msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Enter a valid number >= 1")
         return bot.register_next_step_handler(msg, gw_step_winners)
     draft = get_gw_draft(m.from_user.id)
     draft['winners'] = int(m.text)
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_duration', 'from_user': m.from_user, 'message': m}))
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['DOWN']}'>⏳</tg-emoji> <b>Giveaway duration</b> (e.g., 1d 12h, 10h, 30m, or seconds).")
+    bot.register_next_step_handler(msg, gw_step_duration)
 
 def gw_step_duration(m):
     if not m.text: return
     secs = parse_time_to_seconds(m.text)
     if secs < 60:
-        msg = bot.send_message(m.chat.id, "❌ Duration too short. Min 60s.")
+        msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> Duration too short. Min 60s.")
         return bot.register_next_step_handler(msg, gw_step_duration)
+        
     draft = get_gw_draft(m.from_user.id)
     draft['duration'] = secs
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_captcha', 'from_user': m.from_user, 'message': m}))
+    
+    markup = kb([("✅ Enable", "gw_set_cap_1", "success"), ("⛔ Disable", "gw_set_cap_0", "danger")], [("↩️ Cancel", "menu_giveaway", "primary")])
+    bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['PROFILE']}'>🤖</tg-emoji> <b>Captcha</b>\nDo you want anti-bots in this giveaway? Entries then go through the bot with a quick math check.", reply_markup=markup)
+    # Stop handlers here! Next is purely handled by Inline Buttons / Callbacks.
 
 def gw_step_channels(m):
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
     draft['req_channels'] = m.text.split()
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_ask_notes', 'from_user': m.from_user, 'message': m}))
+    msg = bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['DOWN']}'>📝</tg-emoji> <b>Additional Notes</b>\nWant to add extra info to your giveaway? Rules, shoutouts, links - anything you want participants to see.", reply_markup=gw_skip_kb("gw_preview"))
+    bot.register_next_step_handler(msg, gw_step_notes)
 
 def gw_step_notes(m):
     if not m.text: return
     draft = get_gw_draft(m.from_user.id)
     draft['notes'] = m.text
-    gw_callbacks(type('obj', (object,), {'id': '0', 'data': 'gw_preview', 'from_user': m.from_user, 'message': m}))
+    txt = build_giveaway_text(draft)
+    bot.send_message(m.chat.id, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>📋</tg-emoji> <b>Message Layout / Preview</b>\n\n{txt}", reply_markup=gw_preview_kb())
 
 # ==========================================
 # 👑 ADMIN COMMANDS
@@ -803,6 +716,9 @@ def chosen_check(chosen_inline_result):
 def start_cmd(message):
     user = get_user(message.from_user.id, message.from_user.username)
     
+    # Always Clear Any Lingering Stuck Steps First!
+    bot.clear_step_handler_by_chat_id(message.chat.id)
+    
     if len(message.text.split()) > 1:
         param = message.text.split()[1]
         
@@ -855,10 +771,10 @@ def start_cmd(message):
             gw = giveaways_col.find_one({"_id": gw_id})
             if gw and gw['status'] == 'active':
                 if message.from_user.id in gw['participants']:
-                    return bot.reply_to(message, "✅ You are already participating!")
+                    return bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> You are already participating!")
                 # Generate math captcha
                 a, b = random.randint(1, 10), random.randint(1, 10)
-                msg = bot.reply_to(message, f"🤖 <b>Captcha Check</b>\nWhat is {a} + {b}?")
+                msg = bot.reply_to(message, f"<tg-emoji emoji-id='{TE['PROFILE']}'>🤖</tg-emoji> <b>Captcha Check</b>\nWhat is {a} + {b}?")
                 bot.register_next_step_handler(msg, process_gw_captcha, gw_id, a+b)
                 return
 
@@ -872,22 +788,133 @@ def process_gw_captcha(message, gw_id, ans):
     if message.text and message.text.isdigit() and int(message.text) == ans:
         giveaways_col.update_one({"_id": gw_id}, {"$addToSet": {"participants": message.from_user.id}})
         update_gw_post_participants(gw_id)
-        bot.reply_to(message, "✅ <b>Captcha solved!</b> You are now entered in the giveaway.")
+        bot.reply_to(message, f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> <b>Captcha solved!</b> You are now entered in the giveaway.")
     else:
-        bot.reply_to(message, "❌ <b>Incorrect!</b> Please try joining the giveaway again.")
+        bot.reply_to(message, f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>Incorrect!</b> Please try joining the giveaway again.")
 
 def update_gw_post_participants(gw_id):
     gw = giveaways_col.find_one({"_id": gw_id})
     if not gw or not gw.get('msg_id'): return
     try:
         count = len(gw.get('participants', []))
-        # Simple string replacement in caption for participants
-        bot.edit_message_caption(f"👥 Participants updated: {count}", chat_id=gw['host_chat'], message_id=gw['msg_id'], reply_markup=kb([("🎉 Participate", f"gw_join_{gw_id}", "success")]))
+        bot.edit_message_caption(f"<tg-emoji emoji-id='{TE['PROFILE']}'>👥</tg-emoji> Participants updated: {count}", chat_id=gw['host_chat'], message_id=gw['msg_id'], reply_markup=kb([("🎉 Participate", f"gw_join_{gw_id}", "success")]))
     except: pass
 
 # ==========================================
 # 🔄 FAST CALLBACK HANDLER (LAG FREE)
 # ==========================================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('gw_join_'))
+def gw_join_handler(call):
+    gw_id = call.data.replace('gw_join_', '')
+    gw = giveaways_col.find_one({"_id": gw_id})
+    if not gw or gw['status'] != 'active':
+        return bot.answer_callback_query(call.id, "Giveaway is over or not found!", show_alert=True)
+        
+    if call.from_user.id in gw.get('participants', []):
+        return bot.answer_callback_query(call.id, "You are already participating!", show_alert=True)
+        
+    if gw['captcha']:
+        bot.answer_callback_query(call.id, "Please verify captcha in bot PM", url=f"https://t.me/{CONFIG['BOT_USERNAME']}?start=gwc_{gw_id}")
+        return
+        
+    giveaways_col.update_one({"_id": gw_id}, {"$addToSet": {"participants": call.from_user.id}})
+    update_gw_post_participants(gw_id)
+    bot.answer_callback_query(call.id, "✅ You have successfully entered the giveaway!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('gw_'))
+def gw_callbacks(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    data = call.data
+    draft = get_gw_draft(user_id)
+    bot.clear_step_handler_by_chat_id(chat_id) # Guarantee clean state
+    
+    try:
+        if data == "gw_new":
+            bot.edit_message_text(f"<tg-emoji emoji-id='{TE['GIFT']}'>🎁</tg-emoji> <b>Giveaway</b>\n\nWhat will the winners receive?", chat_id, call.message.id, reply_markup=gw_prize_kb())
+            
+        elif data == "gw_prize_star":
+            draft['prize_type'] = 'star'
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['STAR']}'>⭐️</tg-emoji> Send the number of Stars for the prize:", chat_id, call.message.id, reply_markup=kb([("↩️ Cancel", "menu_giveaway", "danger")]))
+            bot.register_next_step_handler(msg, gw_step_star_amt)
+            
+        elif data == "gw_prize_custom":
+            draft['prize_type'] = 'custom'
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['GIFT']}'>🎁</tg-emoji> Send the prize name (example: Telegram Gift):", chat_id, call.message.id, reply_markup=kb([("↩️ Cancel", "menu_giveaway", "danger")]))
+            bot.register_next_step_handler(msg, gw_step_custom_name)
+            
+        # Callbacks for Skip Buttons routing directly to the next Step Prompt
+        elif data == "gw_ask_banner":
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['PROFILE']}'>🖼</tg-emoji> <b>Banner</b>\nDo you want a banner? Send image or click Skip.", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_ask_hostedby"))
+            bot.register_next_step_handler(msg, gw_step_banner)
+            
+        elif data == "gw_ask_hostedby":
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['PROFILE']}'>👤</tg-emoji> <b>Send Hosted by</b> (a name or @username)", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_ask_winners"))
+            bot.register_next_step_handler(msg, gw_step_hostedby)
+            
+        elif data == "gw_ask_winners":
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['WIN']}'>🏆</tg-emoji> <b>Number of winners (>=1)</b>", chat_id, call.message.id, reply_markup=kb([("↩️ Cancel", "menu_giveaway", "danger")]))
+            bot.register_next_step_handler(msg, gw_step_winners)
+            
+        elif data == "gw_ask_duration":
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['DOWN']}'>⏳</tg-emoji> <b>Giveaway duration</b> (e.g., 1d 12h, 10h, 30m, or seconds).", chat_id, call.message.id, reply_markup=kb([("↩️ Cancel", "menu_giveaway", "danger")]))
+            bot.register_next_step_handler(msg, gw_step_duration)
+            
+        elif data.startswith("gw_set_cap_"):
+            draft['captcha'] = data.endswith("1")
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['TICKET']}'>🔗</tg-emoji> <b>Required Channels</b>\nSend additional required channels/groups as chat_id or @username separated by space, or press Skip", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_ask_notes"))
+            bot.register_next_step_handler(msg, gw_step_channels)
+            
+        elif data == "gw_ask_notes":
+            msg = bot.edit_message_text(f"<tg-emoji emoji-id='{TE['DOWN']}'>📝</tg-emoji> <b>Additional Notes</b>\nWant to add extra info to your giveaway? Rules, shoutouts, links - anything you want participants to see.", chat_id, call.message.id, reply_markup=gw_skip_kb("gw_preview"))
+            bot.register_next_step_handler(msg, gw_step_notes)
+            
+        elif data == "gw_preview":
+            txt = build_giveaway_text(draft)
+            bot.edit_message_text(f"<tg-emoji emoji-id='{TE['SUCCESS']}'>📋</tg-emoji> <b>Message Layout / Preview</b>\n\n{txt}", chat_id, call.message.id, reply_markup=gw_preview_kb())
+            
+        elif data == "gw_publish":
+            end_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=draft['duration'])
+            gw_id = str(uuid.uuid4().hex)[:10]
+            
+            giveaways_col.insert_one({
+                "_id": gw_id,
+                "creator": user_id,
+                "host_chat": draft['host_chat'],
+                "prize_type": draft['prize_type'],
+                "prize_val": draft['prize_val'],
+                "winners": draft['winners'],
+                "captcha": draft['captcha'],
+                "req_channels": draft['req_channels'],
+                "end_time": end_time,
+                "status": "active",
+                "participants": []
+            })
+            
+            txt = build_giveaway_text(draft)
+            markup = kb([("🎉 Participate", f"gw_join_{gw_id}", "success")])
+            
+            try:
+                if draft['banner']:
+                    posted = bot.send_photo(draft['host_chat'], draft['banner'], caption=txt, reply_markup=markup)
+                else:
+                    posted = bot.send_message(draft['host_chat'], txt, reply_markup=markup)
+                    
+                giveaways_col.update_one({"_id": gw_id}, {"$set": {"msg_id": posted.message_id}})
+                bot.edit_message_text(f"<tg-emoji emoji-id='{TE['SUCCESS']}'>✅</tg-emoji> <b>Giveaway Published successfully!</b>", chat_id, call.message.id, reply_markup=kb([("↩️ Back to menu", "menu_main", "primary")]))
+                del user_gw_drafts[user_id]
+            except Exception as e:
+                bot.edit_message_text(f"<tg-emoji emoji-id='{TE['ERROR']}'>❌</tg-emoji> <b>Error publishing:</b> {e}\nEnsure bot is admin in the target chat.", chat_id, call.message.id, reply_markup=gw_preview_kb())
+                
+        elif data == "gw_manage":
+            bot.edit_message_text(f"🗂 <b>Manage Giveaways</b>\nFeature coming soon!", chat_id, call.message.id, reply_markup=kb([("↩️ Back", "menu_giveaway", "danger")]))
+            
+    except Exception as e:
+        print(f"GW Callback Error: {e}")
+
 @bot.callback_query_handler(func=lambda call: not call.data.startswith('gw_'))
 def callback_handler(call):
     try: bot.answer_callback_query(call.id)
@@ -952,7 +979,7 @@ def callback_handler(call):
             except Exception as e: print("Gift menu error:", e)
         
         elif data == "menu_giveaway":
-            try: bot.edit_message_text(text="🎉 <b>Giveaway</b>\n\nHost a giveaway in your channel or group with entry rules, captcha and automatic winners.", chat_id=chat_id, message_id=call.message.message_id, reply_markup=gw_main_kb())
+            try: bot.edit_message_text(text=f"<tg-emoji emoji-id='{TE['WIN']}'>🎉</tg-emoji> <b>Giveaway</b>\n\nHost a giveaway in your channel or group with entry rules, captcha and automatic winners.", chat_id=chat_id, message_id=call.message.message_id, reply_markup=gw_main_kb())
             except Exception: pass
 
         elif data == "menu_luck":
@@ -1015,25 +1042,6 @@ def callback_handler(call):
             
     except Exception as e:
         print(f"Error in Callback: {e}")
-
-# Separate handler for Giveaway Join callbacks on channels
-@bot.callback_query_handler(func=lambda call: call.data.startswith('gw_join_'))
-def gw_join_handler(call):
-    gw_id = call.data.replace('gw_join_', '')
-    gw = giveaways_col.find_one({"_id": gw_id})
-    if not gw or gw['status'] != 'active':
-        return bot.answer_callback_query(call.id, "Giveaway is over or not found!", show_alert=True)
-        
-    if call.from_user.id in gw.get('participants', []):
-        return bot.answer_callback_query(call.id, "You are already participating!", show_alert=True)
-        
-    if gw['captcha']:
-        bot.answer_callback_query(call.id, "Please verify captcha in bot PM", url=f"https://t.me/{CONFIG['BOT_USERNAME']}?start=gwc_{gw_id}")
-        return
-        
-    giveaways_col.update_one({"_id": gw_id}, {"$addToSet": {"participants": call.from_user.id}})
-    update_gw_post_participants(gw_id)
-    bot.answer_callback_query(call.id, "✅ You have successfully entered the giveaway!", show_alert=True)
 
 # ==========================================
 # 💰 PROCESS CUSTOM TOPUP
@@ -1213,16 +1221,16 @@ def giveaway_worker():
                 for w_id in winner_ids:
                     if gw['prize_type'] == 'star':
                         update_balance(w_id, gw['prize_val'])
-                        try: bot.send_message(w_id, f"🎉 <b>Congratulations!</b> You won {gw['prize_val']} ⭐ in a giveaway from {gw['host_chat']}!")
+                        try: bot.send_message(w_id, f"<tg-emoji emoji-id='{TE['WIN']}'>🎉</tg-emoji> <b>Congratulations!</b> You won {gw['prize_val']} <tg-emoji emoji-id='{TE['STAR']}'>⭐️</tg-emoji> in a giveaway from {gw['host_chat']}!")
                         except: pass
                     else:
-                        try: bot.send_message(w_id, f"🎉 <b>Congratulations!</b> You won <b>{gw['prize_val']}</b> in a giveaway! Contact the host to claim it.")
+                        try: bot.send_message(w_id, f"<tg-emoji emoji-id='{TE['WIN']}'>🎉</tg-emoji> <b>Congratulations!</b> You won <b>{gw['prize_val']}</b> in a giveaway! Contact the host to claim it.")
                         except: pass
 
                 # Update message
                 if gw.get('msg_id'):
                     w_text = "\n".join([f"• <a href='tg://user?id={w}'>Winner {i+1}</a>" for i, w in enumerate(winner_ids)]) if winner_ids else "Nobody participated."
-                    txt = f"🏁 <b>GIVEAWAY ENDED</b>\n\n🏆 <b>Winners:</b>\n{w_text}"
+                    txt = f"🏁 <b>GIVEAWAY ENDED</b>\n\n<tg-emoji emoji-id='{TE['WIN']}'>🏆</tg-emoji> <b>Winners:</b>\n{w_text}"
                     try: 
                         if gw.get('banner'): bot.edit_message_caption(txt, chat_id=gw['host_chat'], message_id=gw['msg_id'], parse_mode="HTML")
                         else: bot.edit_message_text(txt, chat_id=gw['host_chat'], message_id=gw['msg_id'], parse_mode="HTML")
